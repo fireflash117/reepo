@@ -4,7 +4,7 @@ const app = express();
 app.use(express.json());
 
 // Configuration
-const HUBSPOT_API_URL = "https://api.hubapi.com";
+const HUBSPOT_API_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
 const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
 const PORT = process.env.PORT || 3000;
 
