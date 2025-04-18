@@ -3,7 +3,7 @@ const axios = require("axios");
 const app = express();
 app.use(express.json());
 
-const HUBSPOT_API_URL = "https://api.hubapi.com";
+const HUBSPOT_API_URL = "https://app-na2.hubspot.com/contacts/242539355/objects/0-1/views/all/list";
 const HUBSPOT_TOKEN = process.env.HUBSPOT_TOKEN;
 
 // Get all contacts
