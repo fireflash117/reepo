@@ -14,7 +14,7 @@ if (!HUBSPOT_TOKEN) {
   process.exit(1);
 }
 
-// Common Axios configuration
+// Axios configuration
 const axiosConfig = {
   headers: {
     Authorization: `Bearer ${HUBSPOT_TOKEN}`,
@@ -23,7 +23,7 @@ const axiosConfig = {
   }
 };
 
-// Helper function to handle HubSpot API errors
+// Helper functions
 const handleHubSpotError = (error) => {
   console.error("HubSpot API Error:", {
     status: error.response?.status,
@@ -33,7 +33,7 @@ const handleHubSpotError = (error) => {
   throw new Error(error.response?.data?.message || "HubSpot API request failed");
 };
 
-// Get all contacts with pagination
+// Get contacts with pagination
 const getContacts = async () => {
   try {
     let allContacts = [];
@@ -46,9 +46,7 @@ const getContacts = async () => {
         limit: 100
       };
       
-      if (after) {
-        params.after = after;
-      }
+      if (after) params.after = after;
 
       const res = await axios.get(`${HUBSPOT_API_URL}/crm/v3/objects/contacts`, {
         ...axiosConfig,
@@ -66,7 +64,7 @@ const getContacts = async () => {
   }
 };
 
-// Get all deals with pagination
+// Get deals with pagination
 const getDeals = async () => {
   try {
     let allDeals = [];
@@ -79,9 +77,7 @@ const getDeals = async () => {
         limit: 100
       };
       
-      if (after) {
-        params.after = after;
-      }
+      if (after) params.after = after;
 
       const res = await axios.get(`${HUBSPOT_API_URL}/crm/v3/objects/deals`, {
         ...axiosConfig,
@@ -99,115 +95,110 @@ const getDeals = async () => {
   }
 };
 
-// Associate a deal with a contact
+// Associate deal with contact
 const assignDeal = async (dealId, contactId) => {
   try {
-    // Validate IDs
-    if (!dealId || !contactId) {
-      throw new Error("Both dealId and contactId are required");
-    }
-
     await axios.put(
       `${HUBSPOT_API_URL}/crm/v3/objects/deals/${dealId}/associations/contacts/${contactId}/deal_to_contact`,
       {},
       axiosConfig
     );
-    
     return true;
   } catch (error) {
     handleHubSpotError(error);
   }
 };
 
-// Validate webhook request
-const validateWebhookRequest = (req) => {
-  if (!req.body || !req.body.fulfillmentInfo || !req.body.sessionInfo) {
-    throw new Error("Invalid webhook request structure");
-  }
-};
-
 // Webhook endpoint
 app.post("/webhook", async (req, res) => {
   try {
-    validateWebhookRequest(req);
+    const tag = req.body.fulfillmentInfo?.tag;
+    const parameters = req.body.sessionInfo?.parameters || {};
     
-    const tag = req.body.fulfillmentInfo.tag;
-    const params = req.body.sessionInfo.parameters;
+    let response = {
+      sessionInfo: { parameters: {} },
+      fulfillmentResponse: { messages: [] }
+    };
 
-    let response;
-    
     switch (tag) {
       case "getContacts":
         const contacts = await getContacts();
-        const contactList = contacts.map(
-          c => `${c.properties.firstname} ${c.properties.lastname} (${c.id})`
-        );
-        response = {
-          fulfillment_response: {
-            messages: [{ text: { text: [contactList.join("\n") || "No contacts found"] } }]
-          }
-        };
-        break;
+        const topContacts = contacts.slice(0, 5); // Show only 5 contacts
         
+        response.sessionInfo.parameters.hubspotContacts = topContacts;
+        response.fulfillmentResponse.messages.push({
+          text: {
+            text: [
+              "Here are your top 5 HubSpot contacts:\n" +
+              topContacts.map((c, i) => 
+                `${i+1}. ${c.properties.firstname} ${c.properties.lastname} (${c.id})`
+              ).join("\n") +
+              "\nPlease select a number (1-5) to choose a contact."
+            ]
+          }
+        });
+        break;
+
       case "getDeals":
         const deals = await getDeals();
-        const dealList = deals.map(
-          d => `${d.properties.dealname} - $${d.properties.amount || 0} (${d.id})`
-        );
-        response = {
-          fulfillment_response: {
-            messages: [{ text: { text: [dealList.join("\n") || "No deals found"] } }]
-          }
-        };
-        break;
+        const topDeals = deals.slice(0, 5); // Show only 5 deals
         
+        response.sessionInfo.parameters.hubspotDeals = topDeals;
+        response.fulfillmentResponse.messages.push({
+          text: {
+            text: [
+              "Here are your top 5 HubSpot deals:\n" +
+              topDeals.map((d, i) => 
+                `${i+1}. ${d.properties.dealname} - $${d.properties.amount || 0} (${d.id})`
+              ).join("\n") +
+              "\nPlease select a number (1-5) to choose a deal."
+            ]
+          }
+        });
+        break;
+
       case "assignDeal":
-        const { dealId, contactId } = params;
-        if (!dealId || !contactId) {
-          response = {
-            fulfillment_response: {
-              messages: [{
-                text: { text: ["Missing dealId or contactId. Please provide both."] }
-              }]
-            }
-          };
-        } else {
-          await assignDeal(dealId, contactId);
-          response = {
-            fulfillment_response: {
-              messages: [{
-                text: { text: [`Deal ${dealId} successfully assigned to contact ${contactId}.`] }
-              }]
-            }
-          };
-        }
-        break;
+        const { selectedContact, selectedDeal } = parameters;
         
-      default:
-        response = {
-          fulfillment_response: {
-            messages: [{ text: { text: ["Unknown tag. No action taken."] } }]
+        if (!selectedContact?.id || !selectedDeal?.id) {
+          throw new Error("Missing contact or deal ID");
+        }
+
+        await assignDeal(selectedDeal.id, selectedContact.id);
+        
+        response.fulfillmentResponse.messages.push({
+          text: {
+            text: [
+              `Success! Deal "${selectedDeal.properties.dealname}" has been assigned to ` +
+              `contact ${selectedContact.properties.firstname} ${selectedContact.properties.lastname}.`
+            ]
           }
-        };
+        });
+        break;
+
+      default:
+        response.fulfillmentResponse.messages.push({
+          text: { text: ["I didn't understand that request. Please try again."] }
+        });
     }
-    
+
     res.json(response);
-    
+
   } catch (error) {
-    console.error("Webhook processing error:", error);
+    console.error("Webhook error:", error);
     res.status(500).json({
-      fulfillment_response: {
+      fulfillmentResponse: {
         messages: [{
-          text: { text: [`Error occurred: ${error.message}`] }
+          text: { text: [`Error: ${error.message}`] }
         }]
       }
     });
   }
 });
 
-// Health check endpoint
+// Health check
 app.get("/health", (req, res) => {
-  res.status(200).json({ status: "healthy" });
+  res.status(200).json({ status: "healthy", timestamp: new Date() });
 });
 
 // Start server
